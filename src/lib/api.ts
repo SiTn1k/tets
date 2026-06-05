@@ -381,3 +381,33 @@ export class MuseumAPI {
 }
 
 export const museumAPI = new MuseumAPI();
+
+async createStarsInvoice(
+  userId: number,
+  amount: number
+) {
+  const response = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stars`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({
+        userId,
+        amount,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to create Stars invoice");
+  }
+
+  return data;
+}
+
+export const museumAPI = new MuseumAPI();
