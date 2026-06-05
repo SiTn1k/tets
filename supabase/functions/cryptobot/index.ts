@@ -28,12 +28,12 @@ Deno.serve(async (req: Request) => {
     if (path[1] === "create-invoice" && method === "POST") {
       if (!cryptobotToken) {
         return new Response(
-          JSON.stringify({ error: "CRYPTOBOT_TOKEN not configured" }),
+          JSON.stringify({ error: "CRYPTOBOT_TOKEN not configured. Set it in Edge Function secrets." }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      const { amount, currency, description } = await req.json();
+      const { amount, currency, description, userId } = await req.json();
 
       if (!amount || !currency) {
         return new Response(
@@ -52,7 +52,8 @@ Deno.serve(async (req: Request) => {
           asset: currency,
           amount: String(amount),
           description: description || "Museum Donation",
-          paid_btn_name: "VIEW",
+          payload: userId ? String(userId) : undefined,
+          paid_btn_name: "callback",
           allow_comments: false,
           allow_anonymous: true,
         }),
@@ -67,8 +68,12 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      const invoice = data.result;
+      // Prefer mini_app_invoice_url for Telegram Mini Apps, then bot_invoice_url
+      const payUrl = invoice.mini_app_invoice_url || invoice.bot_invoice_url || invoice.pay_url;
+
       return new Response(
-        JSON.stringify({ invoice: data.result }),
+        JSON.stringify({ invoice: { ...invoice, pay_url: payUrl } }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -77,62 +82,73 @@ Deno.serve(async (req: Request) => {
     if (path[1] === "webhook" && method === "POST") {
       const body = await req.json();
 
-      // CryptoBot sends: { update_id, update_type: "invoice_paid", invoice: {...} }
-      if (body.update_type === "invoice_paid" && body.invoice) {
-        const invoice = body.invoice;
-        const userId = parseInt(invoice.description?.split(":")?.[1] || "0");
+      // Current API format: { update_type, payload: Invoice, request_date }
+      if (body.update_type === "invoice_paid" && body.payload) {
+        const invoice = body.payload;
 
-        if (userId && invoice.status === "paid") {
+        if (invoice.status === "paid") {
+          const userId = parseInt(invoice.payload || "0");
           const amount = parseFloat(invoice.amount || "0");
+          const asset = invoice.asset;
 
-          // Record donation
-          await supabase.from("donations").insert([{
-            user_id: userId,
-            amount,
-            currency: invoice.asset,
-            payment_method: "cryptobot",
-            transaction_id: `cb_${invoice.invoice_id}`,
-            status: "completed",
-          }]);
+          if (userId && amount > 0) {
+            // Prevent duplicate recording
+            const { data: existing } = await supabase
+              .from("donations")
+              .select("id")
+              .eq("transaction_id", `cb_${invoice.invoice_id}`)
+              .maybeSingle();
 
-          // Add XP (1 XP per 1 currency unit)
-          const { data: user } = await supabase
-            .from("users")
-            .select("total_xp")
-            .eq("id", userId)
-            .maybeSingle();
+            if (!existing) {
+              await supabase.from("donations").insert([{
+                user_id: userId,
+                amount,
+                currency: asset,
+                payment_method: "cryptobot",
+                transaction_id: `cb_${invoice.invoice_id}`,
+                status: "completed",
+              }]);
 
-          if (user) {
-            await supabase
-              .from("users")
-              .update({ total_xp: (user.total_xp || 0) + Math.floor(amount) })
-              .eq("id", userId);
-          }
+              const { data: user } = await supabase
+                .from("users")
+                .select("total_xp")
+                .eq("id", userId)
+                .maybeSingle();
 
-          // Award achievements
-          const { data: existingFirst } = await supabase
-            .from("achievements")
-            .select("id")
-            .eq("user_id", userId)
-            .eq("achievement_key", "FIRST_DONATION")
-            .maybeSingle();
-          if (!existingFirst) {
-            await supabase.from("achievements").insert([{ user_id: userId, achievement_key: "FIRST_DONATION" }]);
-          }
+              if (user) {
+                await supabase
+                  .from("users")
+                  .update({ total_xp: (user.total_xp || 0) + Math.floor(amount) })
+                  .eq("id", userId);
+              }
 
-          const { data: dons } = await supabase
-            .from("donations")
-            .select("amount")
-            .eq("user_id", userId)
-            .eq("status", "completed");
-          const total = (dons || []).reduce((s: number, d: { amount: number }) => s + Number(d.amount), 0);
-          if (total >= 100) {
-            const { data: e } = await supabase.from("achievements").select("id").eq("user_id", userId).eq("achievement_key", "DONATED_100").maybeSingle();
-            if (!e) await supabase.from("achievements").insert([{ user_id: userId, achievement_key: "DONATED_100" }]);
-          }
-          if (total >= 1000) {
-            const { data: e } = await supabase.from("achievements").select("id").eq("user_id", userId).eq("achievement_key", "DONATED_1000").maybeSingle();
-            if (!e) await supabase.from("achievements").insert([{ user_id: userId, achievement_key: "DONATED_1000" }]);
+              // Award FIRST_DONATION
+              const { data: existingFirst } = await supabase
+                .from("achievements")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("achievement_key", "FIRST_DONATION")
+                .maybeSingle();
+              if (!existingFirst) {
+                await supabase.from("achievements").insert([{ user_id: userId, achievement_key: "FIRST_DONATION" }]);
+              }
+
+              // Check DONATED_100 / DONATED_1000
+              const { data: dons } = await supabase
+                .from("donations")
+                .select("amount")
+                .eq("user_id", userId)
+                .eq("status", "completed");
+              const total = (dons || []).reduce((s: number, d: { amount: number }) => s + Number(d.amount), 0);
+              if (total >= 100) {
+                const { data: e } = await supabase.from("achievements").select("id").eq("user_id", userId).eq("achievement_key", "DONATED_100").maybeSingle();
+                if (!e) await supabase.from("achievements").insert([{ user_id: userId, achievement_key: "DONATED_100" }]);
+              }
+              if (total >= 1000) {
+                const { data: e } = await supabase.from("achievements").select("id").eq("user_id", userId).eq("achievement_key", "DONATED_1000").maybeSingle();
+                if (!e) await supabase.from("achievements").insert([{ user_id: userId, achievement_key: "DONATED_1000" }]);
+              }
+            }
           }
         }
       }
