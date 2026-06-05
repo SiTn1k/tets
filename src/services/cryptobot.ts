@@ -1,12 +1,4 @@
-/**
- * CryptoBot API integration for accepting crypto donations.
- * Supports TON, USDT, BTC via CryptoBot (https://cryptobot.dev).
- *
- * All requests go through a Supabase Edge Function to keep the API token
- * server-side. The Edge Function proxies calls to the CryptoBot API.
- */
-
-export type CryptoCurrency = "TON" | "USDT" | "BTC" | "ETH" | "USDC";
+export type CryptoCurrency = "TON" | "USDT" | "BTC" | "ETH" | "USDC" | "LTC";
 
 export interface CryptoInvoice {
   invoice_id: number;
@@ -15,6 +7,8 @@ export interface CryptoInvoice {
   asset: CryptoCurrency;
   amount: string;
   pay_url: string;
+  mini_app_invoice_url?: string;
+  bot_invoice_url?: string;
   status: "active" | "paid" | "expired";
   created_at: string;
   paid_at: string | null;
@@ -37,17 +31,20 @@ export const CRYPTOBOT_CONFIG: CryptoBotConfig = {
 const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cryptobot`;
 
 class CryptoBotService {
-  /** Create an invoice via our Edge Function (keeps token server-side). */
   async createInvoice(
     amount: number,
     currency: CryptoCurrency,
-    description: string = "Museum Donation"
+    description: string = "Museum Donation",
+    userId?: number
   ): Promise<CryptoInvoice | null> {
     try {
       const res = await fetch(`${API_BASE}/create-invoice`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount, currency, description }),
+        headers: {
+          "Content-Type": "application/json",
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ amount, currency, description, userId }),
       });
 
       if (!res.ok) {
@@ -64,8 +61,9 @@ class CryptoBotService {
     }
   }
 
-  /** Open the payment URL for a created invoice. */
   openPaymentUrl(payUrl: string): void {
+    // CryptoBot invoice URLs are NOT Telegram Stars invoice links,
+    // so openInvoice won't work. Use openLink instead.
     if (window.Telegram?.WebApp?.openLink) {
       window.Telegram.WebApp.openLink(payUrl);
     } else {
