@@ -42,7 +42,7 @@ declare global {
         offEvent: (eventType: string, callback: () => void) => void;
         sendData: (data: string) => void;
         openLink: (url: string) => void;
-        openInvoice: (url: string, callback?: () => void) => void;
+        openInvoice: (url: string, callback?: (status: string) => void) => void;
         showPopup: (params: any, callback?: (buttonId: string) => void) => void;
         showAlert: (message: string, callback?: () => void) => void;
         showConfirm: (message: string, callback?: (confirmed: boolean) => void) => void;
