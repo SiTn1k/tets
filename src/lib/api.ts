@@ -360,7 +360,7 @@ export class MuseumAPI {
       .eq("id", userId);
   }
 
-  // ── Achievements ───────────────────────────────────────────────────────────
+    // ── Achievements ───────────────────────────────────────────────────────────
 
   private async awardAchievement(userId: number, key: string): Promise<void> {
     const { data: existing } = await supabase
@@ -378,50 +378,36 @@ export class MuseumAPI {
 
     if (error) console.error("Award achievement error:", error);
   }
-  private async awardAchievement(userId: number, key: string): Promise<void> {
-  const { data: existing } = await supabase
-    .from("achievements")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("achievement_key", key)
-    .maybeSingle();
 
-  if (existing) return;
+  async createStarsInvoice(
+    userId: number,
+    amount: number
+  ) {
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stars`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          userId,
+          amount,
+        }),
+      }
+    );
 
-  const { error } = await supabase
-    .from("achievements")
-    .insert([{ user_id: userId, achievement_key: key }]);
+    const data = await response.json();
 
-  if (error) console.error("Award achievement error:", error);
-}
-
-async createStarsInvoice(
-  userId: number,
-  amount: number
-) {
-  const response = await fetch(
-    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stars`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({
-        userId,
-        amount,
-      }),
+    if (!response.ok) {
+      throw new Error(
+        data.error || "Failed to create Stars invoice"
+      );
     }
-  );
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || "Failed to create Stars invoice");
+    return data;
   }
-
-  return data;
-}
 }
 
 export const museumAPI = new MuseumAPI();
