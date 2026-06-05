@@ -708,51 +708,50 @@ function SupportScreen({ lang, telegramUser, dbUser, onDonated }: any) {
     return amt && amt > 0 ? amt : 0;
   };
 
-  // ── Telegram Stars payment ──────────────────────────────────────────────
+  
+  // ── CryptoBot payment ───────────────────────────────────────────────────
 
-  const handleStarsPayment = async () => {
+  const handleCryptoPayment = async (currency: CryptoCurrency) => {
     if (!dbUser) return;
     const amount = getAmount();
     if (amount <= 0) return;
 
-    setIsProcessing(true);
+    setCryptoLoading(currency);
     successAmountRef.current = amount;
 
     try {
-      // Real Telegram Stars flow using openInvoice with Stars
-      if (window.Telegram?.WebApp) {
-        const WebApp = window.Telegram.WebApp;
+      // Pass userId in description so webhook knows who to credit
+      const invoice = await cryptobotService.createInvoice(
+        amount,
+        currency,
+        `Museum Donation:${dbUser.id}`
+      );
 
-        // Telegram Stars: we use openInvoice with the invoice slug format
-        // The format is: $<bot_username>_<payment_id>
-        // For a simpler approach, we use the WebApp's built-in Stars payment:
-        // window.Telegram.WebApp.openInvoice(url, callback)
-        // But since we need the bot to create the invoice first via Bot API,
-        // we'll record the donation directly (the Stars are charged by the platform)
-        await museumAPI.createDonation(dbUser.id, amount, "XTR", "telegram_stars");
-        await refreshGlobalStats();
-        onDonated();
+      if (invoice && invoice.pay_url) {
+        cryptobotService.openPaymentUrl(invoice.pay_url);
+        // Show success message optimistically
+        // Real confirmation comes via webhook
         setIsSuccess(true);
         setTimeout(() => setIsSuccess(false), 4000);
-
-        // Haptic feedback
-        if (WebApp.HapticFeedback) {
-          WebApp.HapticFeedback.notificationOccurred("success");
-        }
       } else {
-        // Testing outside Telegram - record as completed
-        await museumAPI.createDonation(dbUser.id, amount, "XTR", "telegram_stars");
-        await refreshGlobalStats();
-        onDonated();
-        setIsSuccess(true);
-        setTimeout(() => setIsSuccess(false), 4000);
+        if (window.Telegram?.WebApp) {
+          window.Telegram.WebApp.showAlert(
+            lang === "ua"
+              ? "Помилка створення інвойсу. Перевірте CRYPTOBOT_TOKEN."
+              : "Failed to create invoice. Check CRYPTOBOT_TOKEN."
+          );
+        } else {
+          alert("Failed to create invoice. Check CRYPTOBOT_TOKEN.");
+        }
       }
     } catch (err) {
-      console.error("Stars payment failed:", err);
+      console.error("Crypto payment failed:", err);
     } finally {
-      setIsProcessing(false);
+      setCryptoLoading(null);
+      setShowCryptoPicker(false);
     }
   };
+
 
   // ── Telegram Stars payment ──────────────────────────────────────────────
 
