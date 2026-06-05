@@ -754,46 +754,55 @@ function SupportScreen({ lang, telegramUser, dbUser, onDonated }: any) {
     }
   };
 
-  // ── CryptoBot payment ───────────────────────────────────────────────────
+  // ── Telegram Stars payment ──────────────────────────────────────────────
 
-  const handleCryptoPayment = async (currency: CryptoCurrency) => {
+  const handleStarsPayment = async () => {
     if (!dbUser) return;
     const amount = getAmount();
     if (amount <= 0) return;
 
-    setCryptoLoading(currency);
+    setIsProcessing(true);
     successAmountRef.current = amount;
 
     try {
-      // Pass userId in description so webhook knows who to credit
-      const invoice = await cryptobotService.createInvoice(
-        amount,
-        currency,
-        `Museum Donation:${dbUser.id}`
-      );
+      if (window.Telegram?.WebApp) {
+        const WebApp = window.Telegram.WebApp;
 
-      if (invoice && invoice.pay_url) {
-        cryptobotService.openPaymentUrl(invoice.pay_url);
-        // Show success message optimistically
-        // Real confirmation comes via webhook
-        setIsSuccess(true);
-        setTimeout(() => setIsSuccess(false), 4000);
-      } else {
-        if (window.Telegram?.WebApp) {
-          window.Telegram.WebApp.showAlert(
-            lang === "ua"
-              ? "Помилка створення інвойсу. Перевірте CRYPTOBOT_TOKEN."
-              : "Failed to create invoice. Check CRYPTOBOT_TOKEN."
-          );
+        // 1. Звертаємося до нашого API для створення інвойсу
+        const invoiceData = await museumAPI.createStarsInvoice(dbUser.id, amount);
+
+        if (invoiceData && invoiceData.invoice_link) {
+          // 2. Відкриваємо офіційне платіжне вікно Telegram Stars
+          WebApp.openInvoice(invoiceData.invoice_link, async (status) => {
+            if (status === 'paid') {
+              // 3. Оплата пройшла! Telegram вже сповістив ваш бекенд.
+              // Фронтенд робить лише візуальні ефекти
+              await refreshGlobalStats();
+              onDonated();
+              setIsSuccess(true);
+              setTimeout(() => setIsSuccess(false), 4000);
+
+              if (WebApp.HapticFeedback) {
+                WebApp.HapticFeedback.notificationOccurred("success");
+              }
+            } else {
+              WebApp.showAlert(lang === "ua" ? "Оплату скасовано." : "Payment canceled.");
+            }
+          });
         } else {
-          alert("Failed to create invoice. Check CRYPTOBOT_TOKEN.");
+          WebApp.showAlert(lang === "ua" ? "Не вдалося створити інвойс." : "Invoice creation failed.");
         }
+      } else {
+        // Заглушка для тестування в браузері (поза Telegram)
+        alert("Для оплати Stars відкрийте міні-апп у Telegram");
       }
     } catch (err) {
-      console.error("Crypto payment failed:", err);
+      console.error("Stars payment failed:", err);
+      if (window.Telegram?.WebApp) {
+         window.Telegram.WebApp.showAlert("Помилка платежу.");
+      }
     } finally {
-      setCryptoLoading(null);
-      setShowCryptoPicker(false);
+      setIsProcessing(false);
     }
   };
 
